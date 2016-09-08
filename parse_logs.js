@@ -2,11 +2,13 @@
  * Parser for WordPress Trac Logs
  */
 
-var $ = require( "cheerio" ),
-	_ = require( "underscore" ),
+var $         = require( "cheerio" ),
+	_         = require( "underscore" ),
 	parseArgs = require( "minimist" ),
-	async = require( "async" ),
-	request = require( "request" );
+	async     = require( "async" ),
+	request   = require( "request" )
+	fs        = require('fs'),
+	md        = require('markdown-it')();
 
 function buildChangesets( buildCallback ) {
 	console.log( "Downloaded. Processing Changesets." );
@@ -22,10 +24,23 @@ function buildChangesets( buildCallback ) {
 			break;
 		}
 
+		description = $( logEntries[i+1] ).find( "td.log" );
+
+		// Condense merges for specified version
+		if ( /Merge of \[[0-9]+\] to the [0-9.]+ branch/.test( description.text() ) ) {
+			var regexString = 'Merge of (\[[0-9]+\]) to the ' + args['branch'] + ' branch';
+			var regex = new RegExp( regexString, 'i' );
+			var newMerge = description.text().match( regex );
+
+			if ( null !== newMerge ) {
+				newMerges.push( newMerge[1] );
+			}
+
+			continue;
+		}
+
 		changeset['revision'] = $( logEntries[i] ).find( "td.rev" ).text().trim().replace( /@(.*)/, "[$1]" );
 		changeset['author']   = $( logEntries[i] ).find( "td.author" ).text().trim();
-
-		description = $( logEntries[i+1] ).find( "td.log" );
 
 		// Re-add `` for code segments.
 		$(description).find( "tt" ).each( function() {
@@ -59,8 +74,8 @@ function buildChangesets( buildCallback ) {
 		// Remove Props
 		changeset['description'] = changeset['description'].replace( propsRegex, '' );
 
-		// Limit to 2 consecutive carriage returns
-		changeset['description'] = changeset['description'].replace( /\n\n\n+/g, '\n\n' );
+		// Limit to 1 paragraph
+		changeset['description'] = changeset['description'].replace( /\n\n(?:.|\n)*/, '' );
 		changeset['description'] = changeset['description'].trim();
 
 		changesets.push( changeset );
@@ -73,13 +88,7 @@ function gatherComponents( gatherCallback ) {
 
 	async.each( changesets, function( changeset, changesetCallback ) {
 		async.each( changeset['related'], function( ticket, relatedCallback ) {
-			request( ticketPath+ticket, function( err, response, body ) {
-				if ( !err && response.statusCode == 200 ) {
-					component = $.load( body )( "#h_component" ).next( "td" ).text().trim();
-					changeset['component'].push( component );
-				}
-				relatedCallback();
-			});
+			getTicketComponent( ticketPath+ticket, relatedCallback, changeset, 0 );
 		}, function( err ) {
 			if ( !err ) {
 				// TODO: Pick best category for this changeset.
@@ -101,6 +110,29 @@ function gatherComponents( gatherCallback ) {
 	});
 }
 
+function getTicketComponent( url, relatedCallback, changeset, attempt ) {
+
+	request( url, function( err, response, body ) {
+		if ( !err && response.statusCode == 200 ) {
+			var component = $.load( body )( "#h_component" ).next( "td" ).text().trim();
+			changeset['component'].push( component );
+
+			if ( 0 === changeset['description'].indexOf( component ) ) {
+				changeset['description'] = changeset['description'].replace( component + ': ', '' ).charAt(0).toUpperCase() + changeset['description'].substr( component.length + 3 );
+			}
+
+			relatedCallback();
+		} else if ( ! err && 503 == response.statusCode && 5 > attempt ) {
+			setTimeout(function() {
+				getTicketComponent( url, relatedCallback, changeset, attempt++ );
+			}, 2500);
+		} else {
+			relatedCallback();
+		}
+	});
+
+}
+
 function buildOutput( outputCallback ) {
 	// Reconstitute Log and Collect Props
 	var propsOutput,
@@ -112,8 +144,21 @@ function buildOutput( outputCallback ) {
 		function( item ) {
 			category = item['component'];
 
-			if ( ! category ) {
-				category = "Misc";
+			if ( ! category.length ) {
+				category = item['component'] = "Misc";
+
+			} else if ( 'General' === category[0] && 1 < category.length ) {
+				for ( var i = 0; i < category.length; i++ ) {
+					if ( 'General' !== category[ i ] ) {
+						category = item['component'] = category[ i ];
+						i = 999;
+					}
+				}
+			}
+
+			// If the component is still an array set it to the first string in it's array
+			if ( 'object' === typeof category ) {
+				category = item['component'] = category[0];
 			}
 
 			if ( ! categories[category] ) {
@@ -124,8 +169,14 @@ function buildOutput( outputCallback ) {
 		}
 	);
 
-	_.each( categories, function( category ) {
-		changesetOutput += "### " + category[0]['component'] + "\n";
+	//---- Sort the categories alphabetically
+	const sortedCategories = {};
+	Object.keys( categories ).sort().forEach(function( key ) {
+		sortedCategories[ key ] = categories[ key ];
+	});
+
+	_.each( sortedCategories, function( category, component ) {
+		changesetOutput += "### " + component + "\n";
 		_.each( category, function( changeset ) {
 
 			changesetOutput += "* " +
@@ -144,6 +195,11 @@ function buildOutput( outputCallback ) {
 
 		});
 
+		if ( -1 < component.indexOf('General') ) {
+			var newMergesLength = newMerges.length;
+			changesetOutput += '* Updates for ' + args['branch'] + '. Merge of ' + newMerges.slice( 0, newMergesLength-1 ).join(', ') + ' and ' + newMerges.slice( newMergesLength-1, newMergesLength ) + ' to the 4.6 branch.\n';
+		}
+
 		changesetOutput += "\n";
 	});
 
@@ -156,12 +212,25 @@ function buildOutput( outputCallback ) {
 		", and @" + _.last( props ) + " for their contributions!";
 
 	// Output!
+	var changesetOutput = md.render( changesetOutput );
+
+	if ( 'true' == args['print'] ) {
+		fs.writeFile("weekly-update.html", changesetOutput + "\n\n" + propsOutput, function(err) {
+			if(err) {
+				return console.log(err);
+			}
+
+			console.log("The file was saved!");
+		});
+	}
+
 	console.log( changesetOutput + "\n\n" + propsOutput );
 	outputCallback();
 }
 
 var logPath, logHTML,
 	changesets = [],
+	newMerges = [],
 	args = parseArgs(process.argv.slice(2), {
 		'alias': {
 			'start': ['to'],

@@ -6,9 +6,14 @@ var $         = require( "cheerio" ),
 	_         = require( "underscore" ),
 	parseArgs = require( "minimist" ),
 	async     = require( "async" ),
-	request   = require( "request" )
-	fs        = require('fs'),
+	request   = require( "request" ),
 	md        = require('markdown-it')();
+
+
+var logPath, logHTML, finalHTML;
+var changesets = [];
+var newMerges  = [];
+
 
 function buildChangesets( buildCallback ) {
 	console.log( "Downloaded. Processing Changesets." );
@@ -26,11 +31,9 @@ function buildChangesets( buildCallback ) {
 
 		description = $( logEntries[i+1] ).find( "td.log" );
 
-		// Condense merges for specified version
+		// Condense merges for nextReleaseVersion
 		if ( /Merge of \[[0-9]+\] to the [0-9.]+ branch/.test( description.text() ) ) {
-			var regexString = 'Merge of (\[[0-9]+\]) to the ' + args['branch'] + ' branch';
-			var regex = new RegExp( regexString, 'i' );
-			var newMerge = description.text().match( regex );
+			var newMerge = description.text().match(/Merge of (\[[0-9]+\]) to the 4.6 branch/i);
 
 			if ( null !== newMerge ) {
 				newMerges.push( newMerge[1] );
@@ -62,6 +65,10 @@ function buildChangesets( buildCallback ) {
 		changeset['description'] = changeset['description'].replace( /[\n|, ]Fixes(.*)/i, '' );
 		changeset['description'] = changeset['description'].replace( /\nSee(.*)/i, '' );
 
+		// if ( /\nSee(.*)/.test( description.text() ) ) {
+		// 	console.log( changeset['description'] );
+		// }
+
 		// Extract Props
 		var propsRegex = /\nProps(.*)./i;
 		changeset['props'] = [];
@@ -69,6 +76,9 @@ function buildChangesets( buildCallback ) {
 		var props = changeset['description'].match( propsRegex );
 		if ( props !== null ) {
 			changeset['props'] = props[1].trim().split( /\s*,\s*/ );
+			if ( -1 < changeset['props'].indexOf('scrappy@…') ) {
+				console.log( changeset['description'] );
+			}
 		}
 
 		// Remove Props
@@ -77,6 +87,11 @@ function buildChangesets( buildCallback ) {
 		// Limit to 1 paragraph
 		changeset['description'] = changeset['description'].replace( /\n\n(?:.|\n)*/, '' );
 		changeset['description'] = changeset['description'].trim();
+
+		// if ( -1 < changeset['description'].indexOf('dd white space option') ) {
+		// 	console.log( changeset['description'] );
+		// 	break;
+		// }
 
 		changesets.push( changeset );
 	}
@@ -98,6 +113,15 @@ function gatherComponents( gatherCallback ) {
 				console.dir( err );
 			}
 		});
+		
+		// if ( changeset['related'].length ) {
+		// 	getTicketComponent( ticketPath+changeset['related'][0], changesetCallback, changeset, 0 );
+
+		// } else {
+		// 	changesetCallback();
+
+		// }
+
 	},
 	function( err ) {
 		if ( !err ) {
@@ -144,19 +168,22 @@ function buildOutput( outputCallback ) {
 		function( item ) {
 			category = item['component'];
 
+			// If there is no component assigned add this item to "Misc"
 			if ( ! category.length ) {
 				category = item['component'] = "Misc";
 
-			} else if ( 'General' === category[0] && 1 < category.length ) {
+			} else if ( 'General' === category[0] && 1 < category.length ) { // If we can, add it to a more specific category than general
 				for ( var i = 0; i < category.length; i++ ) {
 					if ( 'General' !== category[ i ] ) {
+
 						category = item['component'] = category[ i ];
 						i = 999;
+
 					}
 				}
 			}
 
-			// If the component is still an array set it to the first string in it's array
+			// If the component is still an object set it to the first string in it's array
 			if ( 'object' === typeof category ) {
 				category = item['component'] = category[0];
 			}
@@ -165,7 +192,7 @@ function buildOutput( outputCallback ) {
 				categories[category] = [];
 			}
 
-			categories[item['component']].push( item );
+			categories[ category ].push( item );
 		}
 	);
 
@@ -195,9 +222,9 @@ function buildOutput( outputCallback ) {
 
 		});
 
-		if ( -1 < component.indexOf('General') ) {
+		if ( -1 < component.indexOf('Misc') ) {
 			var newMergesLength = newMerges.length;
-			changesetOutput += '* Updates for ' + args['branch'] + '. Merge of ' + newMerges.slice( 0, newMergesLength-1 ).join(', ') + ' and ' + newMerges.slice( newMergesLength-1, newMergesLength ) + ' to the 4.6 branch.\n';
+			changesetOutput += '* Updates for 4.6. Merge of ' + newMerges.slice( 0, newMergesLength-1 ).join(', ') + ' and ' + newMerges.slice( newMergesLength-1, newMergesLength ) + ' to the 4.6 branch.\n';
 		}
 
 		changesetOutput += "\n";
@@ -211,60 +238,80 @@ function buildOutput( outputCallback ) {
 	propsOutput = "Thanks to " + "@" + _.without( props, _.last( props ) ).join( ", @" ) +
 		", and @" + _.last( props ) + " for their contributions!";
 
+
 	// Output!
-	var changesetOutput = md.render( changesetOutput );
+	var result = md.render( changesetOutput );
+	var fs     = require('fs');
+	finalHTML = result;
 
-	if ( 'true' == args['print'] ) {
-		fs.writeFile("weekly-update.html", changesetOutput + "\n\n" + propsOutput, function(err) {
-			if(err) {
-				return console.log(err);
-			}
+	fs.writeFile("html.txt", result + '\n\n' + propsOutput, function(err) {
+	    if(err) {
+	        return console.log(err);
+	    }
 
-			console.log("The file was saved!");
-		});
-	}
+	    console.log("The file was saved!");
+	});
 
-	console.log( changesetOutput + "\n\n" + propsOutput );
+	fs.writeFile("markdown.txt", changesetOutput, function(err) {
+	    if(err) {
+	        return console.log(err);
+	    }
+
+	    console.log("The file was saved!");
+	});
+
 	outputCallback();
+
 }
 
-var logPath, logHTML,
-	changesets = [],
-	newMerges = [],
-	args = parseArgs(process.argv.slice(2), {
-		'alias': {
-			'start': ['to'],
-			'stop': ['from']
-		},
-		'default': {
-			'limit': 400
+module.exports.getHtml = ( start, stop, version, callback ) => {
+
+	var gimmeDasHtml = new Promise(( resolve, reject ) => {
+
+		var args = parseArgs(process.argv.slice(2), {
+				'alias': {
+					'start': ['to'],
+					'stop': ['from']
+				},
+				'default': {
+					'limit': 400
+				}
+			}),
+			startRevision      = parseInt( start, 10 ),
+			stopRevision       = parseInt( stop, 10 ),
+			revisionLimit      = 400,
+			nextReleaseVersion = parseFloat( version );
+
+		if ( isNaN(startRevision) || isNaN(stopRevision) ) {
+			console.log( "Usage: node parse_logs.js --start=<start_revision> --stop=<revision_to_stop> [--limit=<total_revisions>]\n" );
+			process.exit();
 		}
-	}),
-	startRevision = parseInt(args['start'], 10),
-	stopRevision = parseInt(args['stop'], 10),
-	revisionLimit = parseInt(args['limit'], 10);
 
-if ( isNaN(startRevision) || isNaN(stopRevision) ) {
-	console.log( "Usage: node parse_logs.js --start=<start_revision> --stop=<revision_to_stop> [--limit=<total_revisions>]\n" );
-	return;
+		logPath = "https://core.trac.wordpress.org/log?rev=" + startRevision + "&stop_rev=" + stopRevision + "&limit=" + revisionLimit + "&verbose=on";
+
+		async.series([
+			function( logCallback ) {
+				console.log( "Downloading " + logPath );
+				request( logPath, function( err, response, html ) {
+					if ( !err && response.statusCode == 200 ) {
+						logHTML = html;
+						logCallback();
+					} else {
+						console.log( "Error Downloading.");
+						return err;
+					}
+				});
+			},
+			async.apply( buildChangesets ),
+			async.apply( gatherComponents ), // Calls buildOutput() on Finish.
+			async.apply( buildOutput ),
+			async.apply( resolve )
+		]);
+
+	});
+
+	gimmeDasHtml.then(( data ) => {
+		callback( finalHTML );
+	});
+
 }
-
-logPath = "https://core.trac.wordpress.org/log?rev=" + startRevision + "&stop_rev=" + stopRevision + "&limit=" + revisionLimit + "&verbose=on";
-
-async.series([
-	function( logCallback ) {
-		console.log( "Downloading " + logPath );
-		request( logPath, function( err, response, html ) {
-			if ( !err && response.statusCode == 200 ) {
-				logHTML = html;
-				logCallback();
-			} else {
-				console.log( "Error Downloading.");
-				return err;
-			}
-		});
-	},
-	async.apply( buildChangesets ),
-	async.apply( gatherComponents ), // Calls buildOutput() on Finish.
-	async.apply( buildOutput )
-]);

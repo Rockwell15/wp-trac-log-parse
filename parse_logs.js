@@ -7,12 +7,14 @@ var $         = require( "cheerio" ),
 	parseArgs = require( "minimist" ),
 	async     = require( "async" ),
 	request   = require( "request" ),
-	md        = require('markdown-it')();
+	md        = require('markdown-it')(),
+	fs        = require('fs');
 
 
-var logPath, logHTML, finalHTML;
-var changesets = [];
-var newMerges  = [];
+var logPath, tempHTML, logHTML, finalHTML, ticketHTML, date, testDescription,
+	changesets = [],
+	newMerges  = [],
+	descriptions = [];
 
 
 function buildChangesets( buildCallback ) {
@@ -65,10 +67,6 @@ function buildChangesets( buildCallback ) {
 		changeset['description'] = changeset['description'].replace( /[\n|, ]Fixes(.*)/i, '' );
 		changeset['description'] = changeset['description'].replace( /\nSee(.*)/i, '' );
 
-		// if ( /\nSee(.*)/.test( description.text() ) ) {
-		// 	console.log( changeset['description'] );
-		// }
-
 		// Extract Props
 		var propsRegex = /\nProps(.*)./i;
 		changeset['props'] = [];
@@ -76,9 +74,6 @@ function buildChangesets( buildCallback ) {
 		var props = changeset['description'].match( propsRegex );
 		if ( props !== null ) {
 			changeset['props'] = props[1].trim().split( /\s*,\s*/ );
-			if ( -1 < changeset['props'].indexOf('scrappy@…') ) {
-				console.log( changeset['description'] );
-			}
 		}
 
 		// Remove Props
@@ -88,10 +83,11 @@ function buildChangesets( buildCallback ) {
 		changeset['description'] = changeset['description'].replace( /\n\n(?:.|\n)*/, '' );
 		changeset['description'] = changeset['description'].trim();
 
-		// if ( -1 < changeset['description'].indexOf('dd white space option') ) {
-		// 	console.log( changeset['description'] );
-		// 	break;
-		// }
+		testDescription = changeset['description'].replace( /(\d+\.\d+ branch)/, '' );
+		if ( -1 < descriptions.indexOf( testDescription ) ) {
+			continue;
+		}
+		descriptions.push( testDescription );
 
 		changesets.push( changeset );
 	}
@@ -239,20 +235,32 @@ function buildOutput( outputCallback ) {
 		", and @" + _.last( props ) + " for their contributions!";
 
 
+
+	var $ticketHTML  = $.load( ticketHTML );
+
+	var commits      = startRevision - stopRevision + 1;
+	var contributors = propsOutput.split('@').length - 1;
+	var created      = $ticketHTML('dt.newticket').length;
+	var reopened     = $ticketHTML('dt.reopenedticket').length;
+	var closed       = $ticketHTML('dt.closedticket').length;
+
+	var header = '';
+	header += 'Welcome back the latest issue of Week in Core, covering changes [' + stopRevision + '-' + startRevision + ']. Here are the highlights:\n';
+	header += '* ' + commits + ' commits\n';
+	header += '* ' + contributors + ' contributors\n';
+	header += '* ' + created + ' tickets created\n';
+	header += '* ' + reopened + ' tickets reopened\n';
+	header += '* ' + closed + ' tickets closed\n\n';
+	header += 'Ticket numbers based on trac [timeline](' + ticketPath + ') for the period above. The following is a summary of commits, organized by component.\n';
+	header += '## Code Changes\n';
+
+
+
 	// Output!
-	var result = md.render( changesetOutput );
-	var fs     = require('fs');
-	finalHTML = result;
+	var result = md.render( header + changesetOutput );
+	finalHTML = result + '\n\n' + propsOutput;
 
 	fs.writeFile("html.txt", result + '\n\n' + propsOutput, function(err) {
-	    if(err) {
-	        return console.log(err);
-	    }
-
-	    console.log("The file was saved!");
-	});
-
-	fs.writeFile("markdown.txt", changesetOutput, function(err) {
 	    if(err) {
 	        return console.log(err);
 	    }
@@ -264,54 +272,83 @@ function buildOutput( outputCallback ) {
 
 }
 
-module.exports.getHtml = ( start, stop, version, callback ) => {
 
-	var gimmeDasHtml = new Promise(( resolve, reject ) => {
+// var args = parseArgs(process.argv.slice(2), {
+// 		'alias': {
+// 			'start': ['to'],
+// 			'stop': ['from']
+// 		},
+// 		'default': {
+// 			'limit': 400
+// 		}
+// 	}),
+// 	startRevision      = parseInt( args['start'], 10 ),
+// 	stopRevision       = parseInt( args['stop'], 10 ),
+// 	date               = args['date'],
+// 	revisionLimit      = 400,
+// 	nextReleaseVersion = parseFloat( args['version'] );
+// if ( isNaN(startRevision) || isNaN(stopRevision) || ! date ) {
+// 	console.log( "Usage: node parse_logs.js --start=<start_revision> --stop=<revision_to_stop> --date=<latest_date_of_overview> [--limit=<total_revisions>]\n" );
+// 	process.exit();
+// }
+// logPath    = "https://core.trac.wordpress.org/log?rev=" + startRevision + "&stop_rev=" + stopRevision + "&limit=" + revisionLimit + "&verbose=on";
 
-		var args = parseArgs(process.argv.slice(2), {
-				'alias': {
-					'start': ['to'],
-					'stop': ['from']
-				},
-				'default': {
-					'limit': 400
-				}
-			}),
-			startRevision      = parseInt( start, 10 ),
-			stopRevision       = parseInt( stop, 10 ),
-			revisionLimit      = 400,
-			nextReleaseVersion = parseFloat( version );
 
-		if ( isNaN(startRevision) || isNaN(stopRevision) ) {
-			console.log( "Usage: node parse_logs.js --start=<start_revision> --stop=<revision_to_stop> [--limit=<total_revisions>]\n" );
-			process.exit();
-		}
+// get past tuesday
+now = new Date();
+now.setDate( now.getDate() - ( 7 + now.getDay() - 2 ) % 7 );
+date = encodeURIComponent( [ now.getMonth() + 1, now.getDate(), now.getFullYear().toString().substr(-2) ].join('/') );
 
-		logPath = "https://core.trac.wordpress.org/log?rev=" + startRevision + "&stop_rev=" + stopRevision + "&limit=" + revisionLimit + "&verbose=on";
+changeTimeline = 'https://core.trac.wordpress.org/timeline?from=' + date + '&daysback=6&changeset=on';
+ticketPath     = 'https://core.trac.wordpress.org/timeline?from=' + date + '&daysback=6&ticket=on';
 
-		async.series([
-			function( logCallback ) {
-				console.log( "Downloading " + logPath );
-				request( logPath, function( err, response, html ) {
-					if ( !err && response.statusCode == 200 ) {
-						logHTML = html;
-						logCallback();
-					} else {
-						console.log( "Error Downloading.");
-						return err;
-					}
-				});
-			},
-			async.apply( buildChangesets ),
-			async.apply( gatherComponents ), // Calls buildOutput() on Finish.
-			async.apply( buildOutput ),
-			async.apply( resolve )
-		]);
-
-	});
-
-	gimmeDasHtml.then(( data ) => {
-		callback( finalHTML );
-	});
-
-}
+async.series([
+	// get changeset timeline, so we can auto grab start & stop revisions
+	function( callback ) {
+		console.log( "Building `logPath`" );
+		request( changeTimeline, function( err, response, html ) {
+			if ( ! err && response.statusCode == 200 ) {
+				tempHTML = $.load( html )('.timeline dl dt');
+				console.log($( tempHTML.find('dl dt')[0] ).text());
+				startRevision = $( tempHTML[0] ).text().match(/\[(.+)\]/)[1];
+				stopRevision  = $( tempHTML[ tempHTML.length - 1 ] ).text().match(/\[(.+)\]/)[1];
+				logPath = "https://core.trac.wordpress.org/log?rev=" + startRevision
+					+ "&stop_rev=" + stopRevision
+					+ "&verbose=on";
+				callback();
+			} else {
+				console.log( "Error Downloading.");
+				return err;
+			}
+		});
+	},
+	// get ticket timeline, so we can auto grab stats highlights
+	function( callback ) {
+		console.log( "Downloading " + ticketPath );
+		request( ticketPath, function( err, response, html ) {
+			if ( !err && response.statusCode == 200 ) {
+				ticketHTML = html;
+				callback();
+			} else {
+				console.log( "Error Downloading.");
+				return err;
+			}
+		});
+	},
+	// get changeset log
+	function( logCallback ) {
+		console.log( "Downloading " + logPath );
+		request( logPath, function( err, response, html ) {
+			if ( !err && response.statusCode == 200 ) {
+				logHTML = html;
+				logCallback();
+			} else {
+				console.log( "Error Downloading.");
+				return err;
+			}
+		});
+	},
+	async.apply( buildChangesets ),
+	async.apply( gatherComponents ), // Calls buildOutput() on Finish.
+	async.apply( buildOutput )
+]);

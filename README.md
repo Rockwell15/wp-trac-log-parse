@@ -6,7 +6,8 @@ Node.js Parser for WordPress Trac Logs.
 Meant to generate the starting point for a [weekly WordPress core news update](https://make.wordpress.org/core/tag/week-in-core/).
 
 # Usage
-`node parse_logs.js --start=<start_revision> --stop=<revision_to_stop> [--limit=<total_revisions>]`
+`node parse_logs.js --start=<start_revision> --stop=<revision_to_stop> --d
+ate=<latest_date_of_overview> [--limit=<total_revisions>]`
 
 **Note**: The parser works backwards from the changeset list, so `start_revision` is the most recent one; `revision_to_stop` should be the oldest revision to check.
 

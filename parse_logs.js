@@ -33,16 +33,16 @@ function buildChangesets( buildCallback ) {
 
 		description = $( logEntries[i+1] ).find( "td.log" );
 
-		// Condense merges for nextReleaseVersion
-		if ( /Merge of \[[0-9]+\] to the [0-9.]+ branch/.test( description.text() ) ) {
-			var newMerge = description.text().match(/Merge of (\[[0-9]+\]) to the 4.6 branch/i);
+		// // Condense merges for nextReleaseVersion
+		// if ( /Merge of \[[0-9]+\] to the [0-9.]+ branch/.test( description.text() ) ) {
+		// 	var newMerge = description.text().match(/Merge of (\[[0-9]+\]) to the 4.6 branch/i);
 
-			if ( null !== newMerge ) {
-				newMerges.push( newMerge[1] );
-			}
+		// 	if ( null !== newMerge ) {
+		// 		newMerges.push( newMerge[1] );
+		// 	}
 
-			continue;
-		}
+		// 	continue;
+		// }
 
 		changeset['revision'] = $( logEntries[i] ).find( "td.rev" ).text().trim().replace( /@(.*)/, "[$1]" );
 		changeset['author']   = $( logEntries[i] ).find( "td.author" ).text().trim();
@@ -273,28 +273,8 @@ function buildOutput( outputCallback ) {
 }
 
 
-// var args = parseArgs(process.argv.slice(2), {
-// 		'alias': {
-// 			'start': ['to'],
-// 			'stop': ['from']
-// 		},
-// 		'default': {
-// 			'limit': 400
-// 		}
-// 	}),
-// 	startRevision      = parseInt( args['start'], 10 ),
-// 	stopRevision       = parseInt( args['stop'], 10 ),
-// 	date               = args['date'],
-// 	revisionLimit      = 400,
-// 	nextReleaseVersion = parseFloat( args['version'] );
-// if ( isNaN(startRevision) || isNaN(stopRevision) || ! date ) {
-// 	console.log( "Usage: node parse_logs.js --start=<start_revision> --stop=<revision_to_stop> --date=<latest_date_of_overview> [--limit=<total_revisions>]\n" );
-// 	process.exit();
-// }
-// logPath    = "https://core.trac.wordpress.org/log?rev=" + startRevision + "&stop_rev=" + stopRevision + "&limit=" + revisionLimit + "&verbose=on";
 
-
-// get past tuesday
+// get past tuesday's date
 now = new Date();
 now.setDate( now.getDate() - ( 7 + now.getDay() - 2 ) % 7 );
 date = encodeURIComponent( [ now.getMonth() + 1, now.getDate(), now.getFullYear().toString().substr(-2) ].join('/') );
